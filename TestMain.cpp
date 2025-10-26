@@ -1,7 +1,7 @@
 // This code is designed to test if the stepper motors can be controlled simultaneously but independantly
 // of the pressure sensor monitoring
 
-#include <ADS1X15.h>
+#include <ADS1X15.h> // Assuming this is the library for ADS1115
 
 // Motor configuration
 struct Motor {
@@ -92,12 +92,12 @@ void readPressureSensors() {
   pressureReadings[1] = readPressure(adc1, 1); // A1
   pressureReadings[2] = readPressure(adc1, 2); // A2
 
-  // Steady output: Overwrite the same line
-  Serial.print("\n"); // Move cursor to start of line
+  // Output pressure values
+  Serial.print("\n");
   for (int i = 0; i < 6; i++) {
-    Serial.print(pressureReadings[i], 2); // 2 decimal places
+    Serial.print(pressureReadings[i], 2);
     Serial.print(" psi");
-    if (i < 5) Serial.print("\t"); // Tab between values
+    if (i < 5) Serial.print("\t");
   }
 }
 
@@ -117,7 +117,7 @@ void updateMotor(int motorIndex, unsigned long currentTime) {
     } else {
       // Switch direction or move to next motor
       if (state.direction) {
-        // Just finished forward, switch to reverse
+        // Finished forward, switch to reverse
         state.direction = false;
         state.currentStep = 0;
         digitalWrite(motor.dirPin, LOW);
