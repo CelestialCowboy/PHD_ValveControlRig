@@ -6,11 +6,11 @@
 ADS1115 adc0(0x48);   // ADDR to GND → P4, P5, P6
 ADS1115 adc1(0x49);   // ADDR to VCC → P1, P2, P3
 
-float pressureReadings[6];     // Live pressure values
-const float TOLERANCE = 0.05;   // Stop when within ±0.5 psi
+float pressureReadings[6];
+const float TOLERANCE = 0.1;
 
 // ===============================================
-//  Motor Configuration (Immutable)
+//  Motor Configuration
 // ===============================================
 struct MotorConfig {
   const uint8_t stepPin;
@@ -18,76 +18,69 @@ struct MotorConfig {
 };
 
 const MotorConfig motorConfigs[] = {
-  {19, 14},  // Motor 1 → P1
-  {18, 27},  // Motor 2 → P2
-  {5,  26},  // Motor 3 → P3
-  {17, 25},  // Motor 4 → P4
-  {16, 32},  // Motor 5 → P5
-  {4,  33}   // Motor 6 → P6
+  {19, 14},  // P1
+  {18, 27},  // P2
+  {5,  26},  // P3
+  {17, 25},  // P4
+  {16, 32},  // P5
+  {4,  33}   // P6
 };
 
 constexpr uint8_t NUM_MOTORS = sizeof(motorConfigs) / sizeof(motorConfigs[0]);
 
-// ===============================================
-//  Motor Runtime State (Mutable)
-// ===============================================
 struct MotorState {
-  float targetPsi = -1.0f;  // <0 → idle
+  float targetPsi = -1.0f;
 };
 
-MotorState motorStates[NUM_MOTORS];  // One per motor
+MotorState motorStates[NUM_MOTORS];
+
+constexpr uint16_t STEP_DELAY_US = 500;
+constexpr uint8_t  STEPS_PER_ITER = 10;
 
 // ===============================================
-//  Stepper Control Settings
-// ===============================================
-constexpr uint16_t STEP_DELAY_US = 500;     // Microseconds per half-step
-constexpr uint8_t  STEPS_PER_ITER = 10;      // Steps per control loop (1 = fine control)
-
-// ===============================================
-//  Serial Command Handling
+//  Serial handling
 // ===============================================
 String serialBuffer = "";
-bool serialComplete = false;
+bool   serialComplete = false;
 
 // ===============================================
-//  Function Prototypes
+//  Prototypes
 // ===============================================
 float readPressure(ADS1115 &adc, uint8_t channel);
 void  updatePressureReadings();
 void  printPressureReadings();
 void  parseCommand(const String &cmd);
+void  stopAllMotors();
 void  controlMotor(uint8_t idx);
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial); // Wait for serial (optional, for some boards)
+  while (!Serial);
 
   Wire.begin();
-
-  // --- Initialize ADCs ---
   adc0.begin();  adc1.begin();
-  adc0.setGain(0);   adc1.setGain(0);   // ±6.144V
-  adc0.setDataRate(7); adc1.setDataRate(7); // 860 SPS
+  adc0.setGain(0);   adc1.setGain(0);
+  adc0.setDataRate(7); adc1.setDataRate(7);
 
-  // --- Initialize motor pins ---
   for (const auto &cfg : motorConfigs) {
     pinMode(cfg.stepPin, OUTPUT);
     pinMode(cfg.dirPin,  OUTPUT);
   }
 
-  // --- Startup message ---
-  Serial.println(F("\n=== Pressure Control System Ready ==="));
-  Serial.println(F("Send: P1-5.0  → Set P1 to 5.0 psi"));
+  Serial.println(F("\n=== Pressure Control Ready ==="));
+  Serial.println(F("Commands:"));
+  Serial.println(F("  P#-<psi>   e.g. P1-5.0  (0.25–12.5 psi)"));
+  Serial.println(F("  stop       → stop all motors immediately"));
   Serial.println(F("P1\tP2\tP3\tP4\tP5\tP6"));
   Serial.println(F("----------------------------------------"));
 }
 
 void loop() {
-  // --- Read serial commands ---
+  // ----- Serial input -----
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
-      if (serialBuffer.length() > 0) serialComplete = true;
+      if (serialBuffer.length()) serialComplete = true;
     } else {
       serialBuffer += c;
     }
@@ -99,15 +92,14 @@ void loop() {
     serialComplete = false;
   }
 
-  // --- Main control loop: 100 Hz ---
+  // ----- 100 Hz control loop -----
   static uint32_t lastUpdate = 0;
   if (millis() - lastUpdate >= 10) {
     lastUpdate = millis();
 
-    updatePressureReadings();   // Refresh all sensors
-    printPressureReadings();    // Live output
+    updatePressureReadings();
+    printPressureReadings();
 
-    // Run active motors
     for (uint8_t i = 0; i < NUM_MOTORS; ++i) {
       if (motorStates[i].targetPsi >= 0) {
         controlMotor(i);
@@ -117,36 +109,25 @@ void loop() {
 }
 
 // ===============================================
-//  Read single pressure sensor
+//  Pressure conversion
 // ===============================================
 float readPressure(ADS1115 &adc, uint8_t channel) {
   int16_t raw = adc.readADC(channel);
   float voltage = raw * (6.144f / 32768.0f);
   voltage = constrain(voltage, 0.0f, 5.0f);
-
-  // ABPDANV015PGAA5: 0.45V @ 0 psi, 4.75V @ 15 psi → 4.3V span
   float pressure = (voltage - 0.45f) / 4.3f * 15.0f;
   return constrain(pressure, 0.0f, 15.0f);
 }
 
-// ===============================================
-//  Update all 6 pressure values
-// ===============================================
 void updatePressureReadings() {
-  // ADC0 → P4, P5, P6
   pressureReadings[3] = readPressure(adc0, 0);
   pressureReadings[4] = readPressure(adc0, 1);
   pressureReadings[5] = readPressure(adc0, 2);
-
-  // ADC1 → P1, P2, P3
   pressureReadings[0] = readPressure(adc1, 0);
   pressureReadings[1] = readPressure(adc1, 1);
   pressureReadings[2] = readPressure(adc1, 2);
 }
 
-// ===============================================
-//  Print live pressures (tab-separated)
-// ===============================================
 void printPressureReadings() {
   for (uint8_t i = 0; i < 6; ++i) {
     Serial.print(pressureReadings[i], 2);
@@ -156,23 +137,33 @@ void printPressureReadings() {
 }
 
 // ===============================================
-//  Parse command: "P1-5.0" → sensor 0, target 5.0
+//  Command parser – now also handles "stop"
 // ===============================================
 void parseCommand(const String &cmd) {
+  String lower = cmd;
+  lower.trim();
+  lower.toLowerCase();
+
+  if (lower == "stop") {
+    stopAllMotors();
+    return;
+  }
+
   if (cmd.length() < 4 || cmd[0] != 'P' || cmd[2] != '-') {
     Serial.println(F("ERR: Format: P#-# (e.g. P1-5.0)"));
     return;
   }
 
-  uint8_t sensor = cmd[1] - '1';  // '1'→0, '6'→5
+  uint8_t sensor = cmd[1] - '1';
   if (sensor > 5) {
     Serial.println(F("ERR: Sensor must be 1-6"));
     return;
   }
 
   float target = cmd.substring(3).toFloat();
-  if (target < 0 || target > 15) {
-    Serial.println(F("ERR: Target must be 0.0–15.0 psi"));
+
+  if (target < 0.25f || target > 12.5f) {
+    Serial.println(F("ERR: Target must be 0.25–12.5 psi"));
     return;
   }
 
@@ -183,26 +174,36 @@ void parseCommand(const String &cmd) {
 }
 
 // ===============================================
-//  Closed-loop control for one motor
+//  STOP ALL MOTORS
+// ===============================================
+void stopAllMotors() {
+  for (uint8_t i = 0; i < NUM_MOTORS; ++i) {
+    motorStates[i].targetPsi = -1.0f;          // clear target
+    const auto &cfg = motorConfigs[i];
+    digitalWrite(cfg.stepPin, LOW);            // ensure step pin low
+    digitalWrite(cfg.dirPin,  LOW);            // optional: set direction low
+  }
+  Serial.println(F("STOP: All motors halted"));
+}
+
+// ===============================================
+//  Closed-loop control
 // ===============================================
 void controlMotor(uint8_t idx) {
   const MotorConfig &cfg = motorConfigs[idx];
   MotorState &state = motorStates[idx];
   float current = pressureReadings[idx];
 
-  // Check if target reached
   if (fabsf(current - state.targetPsi) <= TOLERANCE) {
-    state.targetPsi = -1.0f;  // Deactivate
+    state.targetPsi = -1.0f;
     Serial.print(F("DONE: P")); Serial.print(idx + 1);
     Serial.print(F(" = ")); Serial.print(current, 2); Serial.println(F(" psi"));
     return;
   }
 
-  // Determine direction
   bool forward = (current < state.targetPsi);
   digitalWrite(cfg.dirPin, forward ? HIGH : LOW);
 
-  // Step the motor (one step per cycle)
   for (uint8_t s = 0; s < STEPS_PER_ITER; ++s) {
     digitalWrite(cfg.stepPin, HIGH);
     delayMicroseconds(STEP_DELAY_US);
