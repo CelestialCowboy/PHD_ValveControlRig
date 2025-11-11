@@ -1,26 +1,6 @@
-// This code is designed to test if the stepper motors can be controlled simultaneously but independantly
-// of the pressure sensor monitoring
+// This code is designed to move stepper motors and sample after each movement
 
-#include <ADS1X15.h> // Assuming this is the library for ADS1115
-
-// Motor configuration
-struct Motor {
-  int stepPin;
-  int dirPin;
-};
-
-Motor motors[] = {
-  {19, 14}, // Motor 1
-  {18, 27}, // Motor 2
-  {5, 26},  // Motor 3
-  {17, 25}, // Motor 4
-  {16, 32}, // Motor 5
-  {4, 33}   // Motor 6
-};
-
-const int numMotors = 6;
-const int steps = 2000;
-const int stepDelay = 500; // microseconds per step half-cycle
+#include <ADS1X15.h>
 
 // Pressure sensor configuration
 ADS1115 adc0(0x48); // Address pin = 0 (ADDR to GND)
@@ -28,24 +8,54 @@ ADS1115 adc1(0x49); // Address pin = 1 (ADDR to VCC)
 float pressureReadings[6]; // Store pressure values for each sensor
 const unsigned long sensorInterval = 10000; // 10ms = 100Hz sampling
 
-// Motor state
-struct MotorState {
-  bool active;
-  int currentStep;
-  bool direction; // true = forward, false = reverse
-  unsigned long lastStepTime;
+// Motor 1
+const int stepPin1 = 19;
+const int dirPin1  = 14;
+
+// Motor 2
+const int stepPin2 = 18;
+const int dirPin2  = 27;
+
+// Motor 3
+const int stepPin3 = 5;
+const int dirPin3  = 26;
+
+// Motor 4
+const int stepPin4 = 17;
+const int dirPin4  = 25;
+
+// Motor 5
+const int stepPin5 = 16;
+const int dirPin5  = 32;
+
+// Motor 6
+const int stepPin6 = 4;
+const int dirPin6  = 33;
+
+// Motor configuration
+struct Motor {
+  int stepPin;
+  int dirPin;
 };
 
-MotorState motorStates[numMotors];
-unsigned long lastSensorTime = 0;
+int stepCounter;
+int steps = 250;
+int stepDelay = 500;  // microseconds, adjust for speed
 
 void setup() {
-  // Initialize motor pins
-  for (int i = 0; i < numMotors; i++) {
-    pinMode(motors[i].stepPin, OUTPUT);
-    pinMode(motors[i].dirPin, OUTPUT);
-    motorStates[i] = {true, 0, true, 0}; // Start active, forward
-  }
+  // Set all step/dir pins as outputs
+  pinMode(stepPin1, OUTPUT); 
+  pinMode(dirPin1, OUTPUT);
+  pinMode(stepPin2, OUTPUT); 
+  pinMode(dirPin2, OUTPUT);
+  pinMode(stepPin3, OUTPUT); 
+  pinMode(dirPin3, OUTPUT);
+  pinMode(stepPin4, OUTPUT); 
+  pinMode(dirPin4, OUTPUT);
+  pinMode(stepPin5, OUTPUT); 
+  pinMode(dirPin5, OUTPUT);
+  pinMode(stepPin6, OUTPUT); 
+  pinMode(dirPin6, OUTPUT);
 
   // Initialize ADS1115
   Wire.begin();
@@ -65,20 +75,41 @@ void setup() {
 }
 
 void loop() {
-  unsigned long currentTime = micros();
+  // Run each motor forward then backward in sequence
+  moveMotor(dirPin1, stepPin1);
+  readPressureSensors();
+//  moveMotor(dirPin2, stepPin2);
+//  readPressureSensors();
+//  moveMotor(dirPin3, stepPin3);
+//  readPressureSensors();
+//  moveMotor(dirPin4, stepPin4);
+//  readPressureSensors();
+//  moveMotor(dirPin5, stepPin5);
+//  readPressureSensors();
+//  moveMotor(dirPin6, stepPin6);
+//  readPressureSensors();
+}
 
-  // Update motor states
-  for (int i = 0; i < numMotors; i++) {
-    if (motorStates[i].active) {
-      updateMotor(i, currentTime);
-    }
+void moveMotor(int dirPin, int stepPin) {
+  // Forward direction
+  digitalWrite(dirPin, HIGH);
+  for (stepCounter = 0; stepCounter < steps; stepCounter++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(stepDelay);
   }
+  delay(250);
 
-  // Read pressure sensors at high frequency
-  if (currentTime - lastSensorTime >= sensorInterval) {
-    readPressureSensors();
-    lastSensorTime = currentTime;
+  // Reverse direction
+  digitalWrite(dirPin, LOW);
+  for (stepCounter = 0; stepCounter < steps; stepCounter++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(stepDelay);
   }
+  delay(250);
 }
 
 void readPressureSensors() {
@@ -98,40 +129,6 @@ void readPressureSensors() {
     Serial.print(pressureReadings[i], 2);
     Serial.print(" psi");
     if (i < 5) Serial.print("\t");
-  }
-}
-
-void updateMotor(int motorIndex, unsigned long currentTime) {
-  MotorState &state = motorStates[motorIndex];
-  Motor &motor = motors[motorIndex];
-
-  // Check if it's time for the next step
-  if (currentTime - state.lastStepTime >= stepDelay) {
-    if (state.currentStep < steps) {
-      // Perform a step
-      digitalWrite(motor.stepPin, HIGH);
-      delayMicroseconds(10); // Short pulse
-      digitalWrite(motor.stepPin, LOW);
-      state.currentStep++;
-      state.lastStepTime = currentTime;
-    } else {
-      // Switch direction or move to next motor
-      if (state.direction) {
-        // Finished forward, switch to reverse
-        state.direction = false;
-        state.currentStep = 0;
-        digitalWrite(motor.dirPin, LOW);
-        delay(1000); // Maintain 1-second pause (blocking, but short)
-      } else {
-        // Just finished reverse, deactivate motor
-        state.active = false;
-        // Activate next motor if available
-        if (motorIndex + 1 < numMotors) {
-          motorStates[motorIndex + 1] = {true, 0, true, currentTime};
-          digitalWrite(motors[motorIndex + 1].dirPin, HIGH);
-        }
-      }
-    }
   }
 }
 
